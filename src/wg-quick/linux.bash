@@ -86,13 +86,31 @@ auto_su() {
 }
 
 add_if() {
-	local ret
-	if ! cmd ip link add "$INTERFACE" type amneziawg; then
-		ret=$?
-		[[ -e /sys/module/amneziawg ]] || ! command -v "${WG_QUICK_USERSPACE_IMPLEMENTATION:-amneziawg-go}" >/dev/null && exit $ret
-		echo "[!] Missing WireGuard (Amnezia VPN) kernel module. Falling back to slow userspace implementation." >&2
-		cmd "${WG_QUICK_USERSPACE_IMPLEMENTATION:-amneziawg-go}" "$INTERFACE"
-	fi
+        local ret
+        if ! cmd ip link add "$INTERFACE" type amneziawg; then
+                ret=$?
+                [[ -e /sys/module/amneziawg ]] || ! command -v "${WG_QUICK_USERSPACE_IMPLEMENTATION:-amneziawg-go}" >/dev/null && exit $ret
+                echo "[!] Missing WireGuard (Amnezia VPN) kernel module. Falling back to slow userspace implementation." >&2
+
+                pidfile="/run/amneziawg/${INTERFACE}.pid"
+                mkdir -p "$(dirname "$pidfile")"
+
+		cmd "${WG_QUICK_USERSPACE_IMPLEMENTATION:-amneziawg-go}" -f "$INTERFACE" &
+		childpid=$!
+		echo "$childpid" > "$pidfile"
+
+		for i in {1..50}; do
+		    if ip link show dev "$INTERFACE" >/dev/null 2>&1; then
+			break
+		    fi
+		    sleep 0.1
+		done
+
+		ip link show dev "$INTERFACE" >/dev/null 2>&1 || {
+		    echo "Failed to start userspace interface $INTERFACE" >&2
+		    return 1
+		}
+		fi
 }
 
 del_if() {
@@ -114,6 +132,8 @@ del_if() {
 		done
 	fi
 	cmd ip link delete dev "$INTERFACE"
+
+	rm -f "/run/amneziawg/${INTERFACE}.pid"
 }
 
 add_addr() {
